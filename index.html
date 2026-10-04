@@ -114,6 +114,7 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
     <button data-mode="text" aria-pressed="false">テキスト</button>
     <button data-mode="erase" aria-pressed="false">消しゴム</button>
   </div>
+  <button class="btn" id="bMulti" aria-pressed="false">複数選択</button>
   <button class="btn" id="bUndo" disabled>元に戻す</button>
   <button class="btn" id="bNames" aria-pressed="true">名前</button>
   <button class="btn" id="bAway" aria-pressed="false">相手を隠す</button>
@@ -143,6 +144,7 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
     <span class="dot" id="iDot"></span>
     <input class="n" id="iNum" inputmode="numeric" aria-label="背番号" maxlength="3">
     <input class="m" id="iName" placeholder="名前" aria-label="名前" maxlength="14">
+    <select id="iPos" aria-label="ポジション"><option>GK</option><option>DF</option><option>MF</option><option>FW</option></select>
     <button class="ib" id="iClose" aria-label="閉じる">×</button>
   </div>
 
@@ -254,6 +256,21 @@ function normPts(l){
 }
 /* own-half coordinates: x 0=own goal → 1=halfway line and beyond, y 0..1 across (same as F) */
 function toLocal(ti,p){return ti==0?[p.x/(W/2),p.y/H]:[(W-p.x)/(W/2),(H-p.y)/H]}
+/* GK / DF / MF / FW for each slot of a formation: deepest line = DF, front line = FW, lines between = MF */
+function lineRoles(pts){
+  const xs=[...new Set(pts.slice(1).map(q=>q[0]))].sort((a,b)=>a-b), lines=[];
+  xs.forEach(x=>{const l=lines[lines.length-1];if(l&&x-l[l.length-1]<.06)l.push(x);else lines.push([x])});
+  return pts.map((q,i)=>{if(!i)return 'GK';const li=lines.findIndex(l=>l.includes(q[0]));
+    return lines.length==1?'MF':li==0?'DF':li==lines.length-1?'FW':'MF'});
+}
+function formPts(t){return (F[t.count]&&F[t.count][t.formation])||autoForm(t.count)}
+/* players saved before positions existed: give them GK/DF/MF/FW from where they stand now, without moving anyone */
+function ensurePos(ti){
+  const t=S.teams[ti]; if(t.players.every(p=>p.pos)) return;
+  const pts=formPts(t); if(pts.length!=t.players.length) return;
+  const slot=assignSlots(t.players.map(p=>typeof p.x=='number'?toLocal(ti,p):null),pts), roles=lineRoles(pts);
+  t.players.forEach((p,i)=>{if(!p.pos)p.pos=roles[slot[i]]});
+}
 /* players: per-player own-half coords (or null) → slot index in pts; deepest player takes the GK slot */
 function assignSlots(coords,pts){
   const idx=coords.map((_,i)=>i), slot=idx.slice(), known=idx.filter(i=>coords[i]);
@@ -275,8 +292,8 @@ function applyFormation(ti){
   const placed=p=>typeof p.x=='number';
   const kept=t.players.some(p=>p.role)&&t.players.every(p=>!p.role||!placed(p)||p.home&&Math.hypot(p.x-p.home[0],p.y-p.home[1])<.5);
   if(!kept) t.players.forEach(p=>{p.role=placed(p)?toLocal(ti,p):null});
-  const slot=assignSlots(t.players.map(p=>p.role||null),pts);
-  t.players.forEach((p,i)=>{const [fx,fy]=pts[slot[i]];
+  const slot=assignSlots(t.players.map(p=>p.role||null),pts), roles=lineRoles(pts);
+  t.players.forEach((p,i)=>{const [fx,fy]=pts[slot[i]]; p.pos=roles[slot[i]];
     if(ti==0){p.x=fx*W/2;p.y=fy*H;p.a=0}else{p.x=W-fx*W/2;p.y=H-fy*H;p.a=180}
     if(!p.role) p.role=[fx,fy];
     p.home=[p.x,p.y];});
@@ -299,13 +316,21 @@ if(typeof S.showZones!=='boolean') S.showZones=true;
 let sel=null, vertical=false, undo=[], drag=null, saveT=0, mode='move';
 let pen={kind:'run',color:PEN_COLORS[0],shape:'free'};
 let editing=null, editUndo=false, txtColor=PEN_COLORS[0];
-let msel=null; // multi-selection {p:Set('t:i'),ball:bool,d:Set(drawing index)}
+let msel=null, multi=false; // multi: tapping adds/removes, dragging from anywhere unselected draws a box // multi-selection {p:Set('t:i'),ball:bool,d:Set(drawing index)}
 const TS=2.4;
+/* token shape per position: d = outline, b = where the facing arrow starts, ty/fs = number placement */
+const SHAPES={
+  GK:{d:'<rect x="-1.75" y="-1.75" width="3.5" height="3.5" rx=".35" $S/>',b:2.3,ty:.72,fs:2.1},
+  DF:{d:'<rect x="-1.75" y="-1.75" width="3.5" height="3.5" rx=".35" $S/>',b:2.3,ty:.72,fs:2.1},
+  MF:{d:`<circle r="${R}" $S/>`,b:R+.3,ty:.72,fs:2.1},
+  FW:{d:'<path d="M0 -2.75L2.45 1.5L-2.45 1.5Z" $S/>',b:2.35,ty:1.02,fs:1.85}};
 let play=null;
 
 function save(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}},250)}
 function board(){return {teams:S.teams,ball:S.ball,drawings:S.drawings}}
 function snap(){return JSON.stringify(board())}
+/* boards saved before positions existed: take each player's GK/DF/MF/FW from the current board */
+function fillPos(o){(o.teams||[]).forEach((t,ti)=>(t.players||[]).forEach((p,i)=>{const c=S.teams[ti]&&S.teams[ti].players[i];if(!p.pos&&c&&c.pos)p.pos=c.pos}))}
 function setBoard(o){S.teams=clone(o.teams);S.ball=clone(o.ball);S.drawings=clone(o.drawings||[]);editing=null;msel=null;$('textBar').hidden=true}
 function pushUndo(){undo.push(snap());if(undo.length>60)undo.shift();$('bUndo').disabled=false}
 function doUndo(){if(play)return;const s=undo.pop();if(!s)return;setBoard(JSON.parse(s));sel=null;$('bUndo').disabled=!undo.length;render();save()}
@@ -395,22 +420,22 @@ function render(){
   $('textL').innerHTML=S.drawings.map((d,i)=>d.kind=='text'?textSVG(d,i,cr):'').join('');
   $('drawL').innerHTML=S.drawings.map(drawingSVG).join('')+(drag&&drag.k=='pen'?drawingSVG(drag.d):'');
   let s='';
-  S.teams.forEach((t,ti)=>{ if(!t.visible) return; const ink=inkFor(t.color), edge=ink=='#FFFFFF'?'#FFFFFF':'#13241A';
+  S.teams.forEach((t,ti)=>{ if(!t.visible) return; ensurePos(ti); const ink=inkFor(t.color), edge=ink=='#FFFFFF'?'#FFFFFF':'#13241A';
     t.players.forEach((p,i)=>{
       const nm=S.showNames&&p.name?`<text class="nm" y="${R+2.3}" font-size="1.65">${esc(p.name)}</text>`:'';
+      const sh=SHAPES[p.pos]||SHAPES.MF, st=`fill="${t.color}" stroke="${edge}" stroke-width=".32" stroke-linejoin="round"`;
       s+=`<g class="tok" data-t="${ti}" data-i="${i}" transform="translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})">
         <circle r="3.6" fill="transparent"/>
-        <path transform="rotate(${p.a.toFixed(1)})" d="M${R+.3} -1.15L${R+1.75} 0L${R+.3} 1.15Z" fill="${t.color}" stroke="${edge}" stroke-width=".18" stroke-linejoin="round"/>
-        <circle r="${R}" fill="${t.color}" stroke="${edge}" stroke-width=".32"/>
-        <g transform="rotate(${cr})"><text class="num" y=".72" font-size="2.1" fill="${ink}">${esc(p.num)}</text>${nm}</g>
+        <path transform="rotate(${p.a.toFixed(1)})" d="M${sh.b} -1.15L${sh.b+1.45} 0L${sh.b} 1.15Z" fill="${t.color}" stroke="${edge}" stroke-width=".18" stroke-linejoin="round"/>
+        <g transform="rotate(${cr})">${sh.d.replace('$S',st)}<text class="num" y="${sh.ty}" font-size="${sh.fs}" fill="${ink}">${esc(p.num)}</text>${nm}</g>
       </g>`;
     });
   });
   $('tokens').innerHTML=s;
   const b=S.ball;
   $('ballL').innerHTML=`<g id="ball" transform="translate(${b.x.toFixed(2)} ${b.y.toFixed(2)})">
-    <circle r="3.4" fill="transparent"/>
-    <g transform="scale(1.45)"><circle r="1.2" fill="#fff" stroke="#111" stroke-width=".2"/>
+    <circle r="3.8" fill="transparent"/>
+    <g transform="scale(1.8)"><circle r="1.2" fill="#fff" stroke="#111" stroke-width=".2"/>
     <path d="M0 -.5L.48 -.15L.3 .4L-.3 .4L-.48 -.15Z" fill="#111"/></g></g>`;
   let h='';
   if(mode=='move'&&!play&&sel&&S.teams[sel.t]&&S.teams[sel.t].players[sel.i]&&S.teams[sel.t].visible){
@@ -425,18 +450,20 @@ function render(){
     $('insp').hidden=false; $('iDot').style.background=t.color;
     if(document.activeElement!==$('iNum')) $('iNum').value=p.num;
     if(document.activeElement!==$('iName')) $('iName').value=p.name;
+    $('iPos').value=p.pos||'MF';
   } else { $('insp').hidden=true; sel=null; }
   pruneMsel();
   if(msel&&mode=='move'&&!play){
     const ring='fill="none" stroke="#FFE14D" stroke-width=".4" pointer-events="none"';
     msel.p.forEach(k=>{const [t,i]=k.split(':').map(Number),p=S.teams[t].players[i];h+=`<circle cx="${p.x}" cy="${p.y}" r="${R+.9}" ${ring}/>`});
-    if(msel.ball) h+=`<circle cx="${S.ball.x}" cy="${S.ball.y}" r="2.6" ${ring}/>`;
+    if(msel.ball) h+=`<circle cx="${S.ball.x}" cy="${S.ball.y}" r="3" ${ring}/>`;
     msel.d.forEach(k=>{const d=S.drawings[k];
       if(d.kind=='text'){const w=Math.max(textW(d),TS*2);h+=`<g transform="translate(${d.pts[0][0]} ${d.pts[0][1]}) rotate(${cr})" pointer-events="none"><rect x="${-w/2-.7}" y="${-TS*.75}" width="${w+1.4}" height="${TS*1.5}" rx=".5" fill="none" stroke="#FFE14D" stroke-width=".3"/></g>`}
       else h+=`<path d="${pathD(d.pts)}" fill="none" stroke="rgba(255,225,77,.5)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`});
     const n=msel.p.size,parts=[];if(n)parts.push(`選手${n}人`);if(msel.ball)parts.push('ボール');if(msel.d.size)parts.push(`矢印・文字${msel.d.size}`);
     $('mselTxt').textContent=parts.join('・')+' を選択中（ドラッグでまとめて移動）';$('mselBar').hidden=false;
-  } else $('mselBar').hidden=true;
+  } else if(multi&&mode=='move'&&!play){$('mselTxt').textContent='選手・ボールをタップ、または囲んで選択';$('mselBar').hidden=false}
+  else $('mselBar').hidden=true;
   if(drag&&drag.k=='box'&&drag.moved){const x=Math.min(drag.q.x,drag.q1.x),y=Math.min(drag.q.y,drag.q1.y);
     h+=`<rect x="${x}" y="${y}" width="${Math.abs(drag.q1.x-drag.q.x)}" height="${Math.abs(drag.q1.y-drag.q.y)}" fill="rgba(255,225,77,.12)" stroke="#FFE14D" stroke-width=".25" stroke-dasharray=".8 .6" pointer-events="none"/>`}
   $('selL').innerHTML=h;
@@ -462,6 +489,7 @@ new ResizeObserver(layout).observe($('wrap'));
 /* ---------- modes ---------- */
 function setMode(m){
   if(m!='text') endEdit();
+  if(m!='move'&&multi){multi=false;$('bMulti').setAttribute('aria-pressed',false)}
   mode=m; msel=null; document.body.classList.remove('move','pen','erase','text'); document.body.classList.add(m);
   document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode==m));
   $('penBar').hidden=m!='pen'; sel=null; render();
@@ -506,11 +534,12 @@ function mselToggle(kind,key){
   if(kind=='ball') msel.ball=!msel.ball; else if(msel.p.has(key)) msel.p.delete(key); else msel.p.add(key);
   if(!mselCount()) msel=null;
 }
-function mselInBox(a,b){
+function mselInBox(a,b,add){
   const x0=Math.min(a.x,b.x),x1=Math.max(a.x,b.x),y0=Math.min(a.y,b.y),y1=Math.max(a.y,b.y),in_=(x,y)=>x>=x0&&x<=x1&&y>=y0&&y<=y1;
   const m={p:new Set(),ball:in_(S.ball.x,S.ball.y),d:new Set()};
   S.teams.forEach((t,ti)=>{if(t.visible)t.players.forEach((p,i)=>{if(in_(p.x,p.y))m.p.add(ti+':'+i)})});
   S.drawings.forEach((d,k)=>{if(d.pts.length&&d.pts.every(([x,y])=>in_(x,y)))m.d.add(k)});
+  if(add&&msel){msel.p.forEach(k=>m.p.add(k));msel.d.forEach(k=>m.d.add(k));m.ball=m.ball||msel.ball}
   msel=m; sel=null; if(!mselCount()) msel=null;
 }
 function mselSnapshot(){
@@ -526,7 +555,9 @@ function mselMove(o,dx,dy){
   if(o.ball){S.ball.x=o.ball[0]+dx;S.ball.y=o.ball[1]+dy}
   o.d.forEach(([d,pts])=>{d.pts=pts.map(([x,y])=>[x+dx,y+dy])});
 }
-$('mselClear').onclick=()=>{msel=null;render()};
+function setMulti(v){multi=v;msel=null;sel=null;$('bMulti').setAttribute('aria-pressed',v);if(v&&mode!='move')setMode('move');render()}
+$('bMulti').onclick=()=>setMulti(!multi);
+$('mselClear').onclick=()=>{msel=null;if(multi)setMulti(false);else render()};
 
 /* ---------- pointer ---------- */
 const svg=$('board');
@@ -550,6 +581,7 @@ svg.addEventListener('pointerdown',e=>{
     if(hd&&sel) drag={k:'rot',moved:false};
     else if(msel&&(bl&&msel.ball||!bl&&tk&&msel.p.has(tk.dataset.t+':'+tk.dataset.i)))
       drag={...base,k:'group',tap:bl?['ball']:['p',tk.dataset.t+':'+tk.dataset.i]};
+    else if(multi) drag={...base,k:'box',q1:q,tap:bl?['ball']:tk?['p',tk.dataset.t+':'+tk.dataset.i]:null};
     else if(bl) drag={...base,k:'ball',ox:S.ball.x,oy:S.ball.y};
     else if(tk){const t=+tk.dataset.t,i=+tk.dataset.i,p=S.teams[t].players[i];drag={...base,k:'p',t,i,ox:p.x,oy:p.y}}
     else drag={...base,k:'box',q1:q};
@@ -581,7 +613,7 @@ function endDrag(){
   if(!drag) return;
   if(drag.k=='pen'){const p=drag.d.pts;let len=0;for(let i=1;i<p.length;i++)len+=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);
     if(len>=2){pushUndo();S.drawings.push(drag.d)}}
-  else if(drag.k=='box'){ if(drag.moved) mselInBox(drag.q,drag.q1); else {sel=null;msel=null} }
+  else if(drag.k=='box'){ if(drag.moved) mselInBox(drag.q,drag.q1,multi); else if(drag.tap) mselToggle(drag.tap[0],drag.tap[1]); else if(!multi){sel=null;msel=null} }
   else if(drag.k=='group'&&!drag.moved){ mselToggle(drag.tap[0],drag.tap[1]); }
   else if(drag.k=='ball'&&!drag.moved&&(msel||drag.shift)){ mselToggle('ball'); }
   else if(drag.k=='p'&&!drag.moved&&(msel||drag.shift)){ mselToggle('p',drag.t+':'+drag.i); }
@@ -595,6 +627,7 @@ svg.addEventListener('pointerup',endDrag); svg.addEventListener('pointercancel',
 /* ---------- inspector ---------- */
 $('iNum').addEventListener('input',e=>{if(!sel)return;S.teams[sel.t].players[sel.i].num=e.target.value;render();save()});
 $('iName').addEventListener('input',e=>{if(!sel)return;S.teams[sel.t].players[sel.i].name=e.target.value;render();save()});
+$('iPos').addEventListener('change',e=>{if(!sel)return;pushUndo();S.teams[sel.t].players[sel.i].pos=e.target.value;render();save()});
 $('iClose').onclick=()=>{sel=null;document.activeElement.blur();render()};
 
 /* ---------- toolbar ---------- */
@@ -656,7 +689,7 @@ $('bScenes').onclick=()=>{renderScenes();$('dScn').showModal()};
 $('scSave').onclick=()=>{const name=$('scName').value.trim()||$('scName').placeholder;S.scenes.push({name,data:snap()});save();renderScenes();render();toast(`「${name}」を保存しました`)};
 $('scList').addEventListener('click',e=>{
   const b=e.target.closest('button');if(!b)return;
-  if(b.dataset.open!=null){pushUndo();setBoard(JSON.parse(S.scenes[+b.dataset.open].data));sel=null;render();save();$('dScn').close()}
+  if(b.dataset.open!=null){pushUndo();const o=JSON.parse(S.scenes[+b.dataset.open].data);fillPos(o);setBoard(o);sel=null;render();save();$('dScn').close()}
   if(b.dataset.up!=null){const i=+b.dataset.up;[S.scenes[i-1],S.scenes[i]]=[S.scenes[i],S.scenes[i-1]];save();renderScenes()}
   if(b.dataset.over!=null){const s=S.scenes[+b.dataset.over];s.data=snap();save();toast(`「${s.name}」を今の盤面で上書きしました`)}
   if(b.dataset.del!=null){S.scenes.splice(+b.dataset.del,1);save();renderScenes();render()}
@@ -709,7 +742,9 @@ function applyShared(o,replaceAll){
 if(location.protocol.startsWith('http')){
   fetch('default.json',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(o=>{
     if(!validData(o)) return; sharedDefault=o; $('bDefault').hidden=false;
-    if(firstLaunch){applyShared(o,true);sel=null;render();save()}
+    const pristine=S.teams.every(t=>t.players.every(p=>!p.name))&&!S.scenes.length;
+    if(firstLaunch||pristine&&S.defaultApplied!==o.savedAt){applyShared(o,true);S.defaultApplied=o.savedAt;sel=null;render();save();if(!firstLaunch)toast('共有データ（名前・配置）を読み込みました')}
+    else if(S.teams.every(t=>t.players.every(p=>!p.name))) toast('名前入りの共有データがあります：「場面・ファイル」→「共有された初期データを読み込む」');
   }).catch(()=>{});
 }
 $('bDefault').onclick=()=>{if(!sharedDefault)return;pushUndo();const n=applyShared(sharedDefault,false);sel=null;render();save();renderScenes();toast(`初期データを読み込みました（場面 ${n} 件を追加）`)};
@@ -727,7 +762,7 @@ function frameBetween(A,B,k){
 function startPlay(restart){
   if(S.scenes.length<2) return;
   if(restart!==true) pushUndo(); sel=null;
-  play={list:S.scenes.map(s=>JSON.parse(s.data)),idx:0,phase:'hold',t0:performance.now(),speed:play?play.speed:1,raf:0,done:false};
+  play={list:S.scenes.map(s=>{const o=JSON.parse(s.data);fillPos(o);return o}),idx:0,phase:'hold',t0:performance.now(),speed:play?play.speed:1,raf:0,done:false};
   endEdit(); document.body.classList.add('playing'); $('playBar').hidden=false; $('insp').hidden=true; $('penBar').hidden=true;
   setBoard(play.list[0]); render(); updPlayLabel(); play.raf=requestAnimationFrame(tick);
 }
