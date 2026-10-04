@@ -137,6 +137,11 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
   </div>
 
   <div class="float" id="penBar" hidden>
+    <div class="seg" role="group" aria-label="線の引き方">
+      <button data-shape="free" aria-pressed="true">フリーハンド</button>
+      <button data-shape="line" aria-pressed="false">直線</button>
+    </div>
+    <span class="vsep"></span>
     <div class="seg" role="group" aria-label="線の種類">
       <button data-kind="run" aria-pressed="true">動き（実線）</button>
       <button data-kind="pass" aria-pressed="false">パス（破線）</button>
@@ -207,12 +212,44 @@ function autoForm(n){
   return p;
 }
 function formsFor(n){return Object.keys(F[n]||{})}
+/* square cost matrix -> a[row]=col with minimum total cost (Hungarian method) */
+function hungarian(c){
+  const n=c.length,u=Array(n+1).fill(0),v=Array(n+1).fill(0),p=Array(n+1).fill(0),way=Array(n+1).fill(0);
+  for(let i=1;i<=n;i++){
+    p[0]=i;let j0=0;const minv=Array(n+1).fill(Infinity),used=Array(n+1).fill(false);
+    do{used[j0]=true;const i0=p[j0];let d=Infinity,j1=0;
+      for(let j=1;j<=n;j++)if(!used[j]){const cur=c[i0-1][j-1]-u[i0]-v[j];if(cur<minv[j]){minv[j]=cur;way[j]=j0}if(minv[j]<d){d=minv[j];j1=j}}
+      for(let j=0;j<=n;j++)if(used[j]){u[p[j]]+=d;v[j]-=d}else minv[j]-=d;
+      j0=j1;}while(p[j0]!=0);
+    do{const j1=way[j0];p[j0]=p[j1];j0=j1}while(j0);
+  }
+  const a=Array(n);for(let j=1;j<=n;j++)a[p[j]-1]=j-1;return a;
+}
+/* stretch points to 0..1 on each axis so the old shape and the new formation compare by relative position */
+function normPts(l){
+  if(!l.length) return l;
+  const xs=l.map(q=>q[0]),ys=l.map(q=>q[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  return l.map(([x,y])=>[x1-x0>.02?(x-x0)/(x1-x0):.5,y1-y0>.02?(y-y0)/(y1-y0):.5]);
+}
+/* own-half coordinates: x 0=own goal → 1=halfway line and beyond, y 0..1 across (same as F) */
+function toLocal(ti,p){return ti==0?[p.x/(W/2),p.y/H]:[(W-p.x)/(W/2),(H-p.y)/H]}
 function applyFormation(ti){
   const t=S.teams[ti], n=t.count;
   while(t.players.length<n){const used=new Set(t.players.map(p=>+p.num));let k=t.players.length+1;while(used.has(k))k++;t.players.push({num:String(k),name:''})}
   t.players.length=n;
   const pts=(F[n]&&F[n][t.formation])||autoForm(n);
-  t.players.forEach((p,i)=>{const [fx,fy]=pts[i];
+  // keep roles: deepest player stays GK, the rest go to the slot nearest their current relative spot
+  const cur=t.players.map(p=>typeof p.x=='number'?toLocal(ti,p):null), slot=t.players.map((_,i)=>i);
+  const known=cur.map((c,i)=>c?i:-1).filter(i=>i>=0);
+  if(known.length>1){
+    const gk=known.reduce((a,b)=>cur[b][0]<cur[a][0]?b:a);
+    const rows=slot.filter(i=>i!=gk), cols=pts.map((_,j)=>j).slice(1);
+    const kn=rows.filter(i=>cur[i]), A=normPts(kn.map(i=>cur[i])), B=normPts(cols.map(j=>pts[j]));
+    const pos=new Map(kn.map((i,k)=>[i,A[k]]));
+    const as=hungarian(rows.map(i=>cols.map((_,k)=>{const a=pos.get(i);if(!a)return 0;const dx=a[0]-B[k][0],dy=a[1]-B[k][1];return dx*dx+dy*dy})));
+    slot[gk]=0; rows.forEach((i,r)=>slot[i]=cols[as[r]]);
+  }
+  t.players.forEach((p,i)=>{const [fx,fy]=pts[slot[i]];
     if(ti==0){p.x=fx*W/2;p.y=fy*H;p.a=0}else{p.x=W-fx*W/2;p.y=H-fy*H;p.a=180}});
 }
 function fresh(){
@@ -230,7 +267,7 @@ if(!S.homeBlue){S.homeBlue=true;const h=S.teams[0],a=S.teams[1];if(h&&a&&h.color
 if(!Array.isArray(S.scenes)) S.scenes=[];
 
 let sel=null, vertical=false, undo=[], drag=null, saveT=0, mode='move';
-let pen={kind:'run',color:PEN_COLORS[0]};
+let pen={kind:'run',color:PEN_COLORS[0],shape:'free'};
 let play=null;
 
 function save(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}},250)}
@@ -354,6 +391,7 @@ function setMode(m){
   $('penBar').hidden=m!='pen'; sel=null; render();
 }
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+document.querySelectorAll('[data-shape]').forEach(b=>b.onclick=()=>{pen.shape=b.dataset.shape;document.querySelectorAll('[data-shape]').forEach(x=>x.setAttribute('aria-pressed',x===b))});
 document.querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>{pen.kind=b.dataset.kind;document.querySelectorAll('[data-kind]').forEach(x=>x.setAttribute('aria-pressed',x===b))});
 $('penColors').innerHTML=PEN_COLORS.map(c=>`<button class="pc" data-pc="${c}" style="background:${c}" aria-label="線の色" aria-pressed="${c==pen.color}"></button>`).join('');
 $('penColors').addEventListener('click',e=>{const b=e.target.closest('[data-pc]');if(!b)return;pen.color=b.dataset.pc;$('penColors').querySelectorAll('.pc').forEach(x=>x.setAttribute('aria-pressed',x===b))});
@@ -367,7 +405,7 @@ function eraseAt(q){const k=hitDrawing(q.x,q.y);if(k<0)return;if(!drag.moved){dr
 svg.addEventListener('pointerdown',e=>{
   if(play) return;
   const q=pt(e);
-  if(mode=='pen'){drag={k:'pen',d:{kind:pen.kind,color:pen.color,pts:[[clampX(q.x),clampY(q.y)]]}};}
+  if(mode=='pen'){drag={k:'pen',line:pen.shape=='line',d:{kind:pen.kind,color:pen.color,pts:[[clampX(q.x),clampY(q.y)]]}};}
   else if(mode=='erase'){drag={k:'erase',moved:false};eraseAt(q)}
   else{
     const hd=e.target.closest('[data-handle]'), tk=e.target.closest('.tok'), bl=e.target.closest('#ball');
@@ -380,7 +418,9 @@ svg.addEventListener('pointerdown',e=>{
 });
 svg.addEventListener('pointermove',e=>{
   if(!drag) return; const q=pt(e);
-  if(drag.k=='pen'){const p=drag.d.pts,l=p[p.length-1],x=clampX(q.x),y=clampY(q.y);if(Math.hypot(x-l[0],y-l[1])>.5){p.push([x,y]);render()}return}
+  if(drag.k=='pen'){const p=drag.d.pts,x=clampX(q.x),y=clampY(q.y);
+    if(drag.line){p.length=1;p.push([x,y]);render();return}
+    const l=p[p.length-1];if(Math.hypot(x-l[0],y-l[1])>.5){p.push([x,y]);render()}return}
   if(drag.k=='erase'){eraseAt(q);return}
   if(drag.k=='rot'){const p=S.teams[sel.t].players[sel.i];
     if(!drag.moved){drag.moved=true;pushUndo()}
@@ -445,7 +485,7 @@ $('setBody').addEventListener('input',e=>{
   if(el.dataset.name!=null){t.players[+el.dataset.name].name=el.value;render();save()}
 });
 $('setBody').addEventListener('change',e=>{
-  if(e.target.id=='tForm'){pushUndo();S.teams[tab].formation=e.target.value;applyFormation(tab);sel=null;render();save()}
+  if(e.target.id=='tForm'){pushUndo();S.teams[tab].formation=e.target.value;applyFormation(tab);sel=null;render();save();toast('今のポジションを保ったまま並べ替えました')}
   if(e.target.id=='tName') renderSettings();
 });
 $('bSettings').onclick=()=>{renderSettings();$('dSet').showModal()};
