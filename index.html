@@ -341,12 +341,13 @@ let pen={kind:'run',color:PEN_COLORS[0],shape:'free'};
 let editing=null, editUndo=false, txtColor=PEN_COLORS[0];
 let msel=null, multi=false; // multi: tapping adds/removes, dragging from anywhere unselected draws a box // multi-selection {p:Set('t:i'),ball:bool,d:Set(drawing index)}
 const TS=2.4;
-/* token shape per position: d = outline, b = where the facing arrow starts, ty/fs = number placement */
+/* token shape per position: d = outline drawn in pitch coords pointing toward the opponent's goal (+x),
+   b = where the facing arrow starts, ox = number offset along the attack direction, ty/fs = number placement */
 const SHAPES={
-  GK:{d:'<rect x="-1.75" y="-1.75" width="3.5" height="3.5" rx=".35" $S/>',b:2.3,ty:.72,fs:2.1},
-  DF:{d:'<rect x="-1.75" y="-1.75" width="3.5" height="3.5" rx=".35" $S/>',b:2.3,ty:.72,fs:2.1},
-  MF:{d:`<circle r="${R}" $S/>`,b:R+.3,ty:.72,fs:2.1},
-  FW:{d:'<path d="M0 -2.75L2.45 1.5L-2.45 1.5Z" $S/>',b:2.35,ty:1.02,fs:1.85}};
+  GK:{d:'<rect x="-1.75" y="-1.75" width="3.5" height="3.5" rx=".35" $S/>',b:2.3,ox:0,ty:.72,fs:2.1},
+  DF:{d:'<rect x="-1.75" y="-1.75" width="3.5" height="3.5" rx=".35" $S/>',b:2.3,ox:0,ty:.72,fs:2.1},
+  MF:{d:`<circle r="${R}" $S/>`,b:R+.3,ox:0,ty:.72,fs:2.1},
+  FW:{d:'<path d="M2.75 0L-1.5 2.45L-1.5 -2.45Z" $S/>',b:3,ox:-.3,ty:.66,fs:1.85}};
 let play=null;
 
 function save(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}},250)}
@@ -450,7 +451,8 @@ function render(){
       s+=`<g class="tok" data-t="${ti}" data-i="${i}" transform="translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})">
         <circle r="3.6" fill="transparent"/>
         <path transform="rotate(${p.a.toFixed(1)})" d="M${sh.b} -1.15L${sh.b+1.45} 0L${sh.b} 1.15Z" fill="${t.color}" stroke="${edge}" stroke-width=".18" stroke-linejoin="round"/>
-        <g transform="rotate(${cr})">${sh.d.replace('$S',st)}<text class="num" y="${sh.ty}" font-size="${sh.fs}" fill="${ink}">${esc(p.num)}</text>${nm}</g>
+        <g transform="rotate(${ti?180:0})">${sh.d.replace('$S',st)}<g transform="translate(${sh.ox} 0) rotate(${cr-(ti?180:0)})"><text class="num" y="${sh.ty}" font-size="${sh.fs}" fill="${ink}">${esc(p.num)}</text></g></g>
+        <g transform="rotate(${cr})">${nm}</g>
       </g>`;
     });
   });
