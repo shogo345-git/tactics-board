@@ -53,6 +53,11 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 svg#board{width:100%;height:100%;display:block;touch-action:none}
 body.pen svg#board{cursor:crosshair}
 body.erase svg#board{cursor:cell}
+body.text svg#board{cursor:text}
+.note{font-weight:700;text-anchor:middle;paint-order:stroke;stroke:rgba(0,0,0,.72);stroke-width:.6px;stroke-linejoin:round;pointer-events:none}
+.zl{font-weight:700;fill:rgba(255,255,255,.6);pointer-events:none}
+.float.top{top:10px;bottom:auto}
+#tText{width:220px}
 .num{font-family:"Barlow Condensed","Arial Narrow",sans-serif;font-weight:700;text-anchor:middle;pointer-events:none}
 .nm{font-weight:700;text-anchor:middle;fill:#fff;paint-order:stroke;stroke:#123A24;stroke-width:.5px;stroke-linejoin:round;pointer-events:none}
 body.move .tok, body.move #ball{cursor:grab}
@@ -106,12 +111,15 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
   <div class="seg" role="group" aria-label="ツール">
     <button data-mode="move" aria-pressed="true">移動</button>
     <button data-mode="pen" aria-pressed="false">ペン</button>
+    <button data-mode="text" aria-pressed="false">テキスト</button>
     <button data-mode="erase" aria-pressed="false">消しゴム</button>
   </div>
   <button class="btn" id="bUndo" disabled>元に戻す</button>
   <button class="btn" id="bNames" aria-pressed="true">名前</button>
   <button class="btn" id="bAway" aria-pressed="false">相手を隠す</button>
   <button class="btn" id="bFace">全員ボールを向く</button>
+  <button class="btn" id="bZones" aria-pressed="true">レーン・ゾーン</button>
+  <button class="btn" id="bClearDraw">矢印・文字を消去</button>
   <span class="sp"></span>
   <button class="btn" id="bPlay" disabled>▶ 再生</button>
   <button class="btn" id="bScenes">場面・ファイル</button>
@@ -122,9 +130,11 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
   <svg id="board" xmlns="http://www.w3.org/2000/svg" aria-label="ピッチ">
     <g id="rot">
       <g id="pitch"></g>
+      <g id="zonesL" pointer-events="none"></g>
       <g id="drawL"></g>
       <g id="tokens"></g>
       <g id="ballL"></g>
+      <g id="textL" pointer-events="none"></g>
       <g id="selL"></g>
     </g>
   </svg>
@@ -148,8 +158,14 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
     </div>
     <span class="vsep"></span>
     <span id="penColors" style="display:flex;gap:8px"></span>
+  </div>
+
+  <div class="float top" id="textBar" hidden>
+    <input id="tText" placeholder="伝えたいことを入力" aria-label="テキスト" maxlength="40" enterkeyhint="done">
+    <span id="textColors" style="display:flex;gap:8px"></span>
     <span class="vsep"></span>
-    <button class="btn" id="bClearDraw">線を全部消す</button>
+    <button class="btn" id="tDel">削除</button>
+    <button class="btn primary" id="tDone">完了</button>
   </div>
 
   <div class="float" id="playBar" hidden>
@@ -265,15 +281,18 @@ if(!S||!Array.isArray(S.teams)){S=fresh();S.teams.forEach((_,i)=>applyFormation(
 if(!Array.isArray(S.drawings)) S.drawings=[];
 if(!S.homeBlue){S.homeBlue=true;const h=S.teams[0],a=S.teams[1];if(h&&a&&h.color=='#D7263D'&&a.color=='#1F4FD6'){h.color='#1F4FD6';a.color='#D7263D'}}
 if(!Array.isArray(S.scenes)) S.scenes=[];
+if(typeof S.showZones!=='boolean') S.showZones=true;
 
 let sel=null, vertical=false, undo=[], drag=null, saveT=0, mode='move';
 let pen={kind:'run',color:PEN_COLORS[0],shape:'free'};
+let editing=null, editUndo=false, txtColor=PEN_COLORS[0];
+const TS=2.4;
 let play=null;
 
 function save(){clearTimeout(saveT);saveT=setTimeout(()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}},250)}
 function board(){return {teams:S.teams,ball:S.ball,drawings:S.drawings}}
 function snap(){return JSON.stringify(board())}
-function setBoard(o){S.teams=clone(o.teams);S.ball=clone(o.ball);S.drawings=clone(o.drawings||[])}
+function setBoard(o){S.teams=clone(o.teams);S.ball=clone(o.ball);S.drawings=clone(o.drawings||[]);editing=null;$('textBar').hidden=true}
 function pushUndo(){undo.push(snap());if(undo.length>60)undo.shift();$('bUndo').disabled=false}
 function doUndo(){if(play)return;const s=undo.pop();if(!s)return;setBoard(JSON.parse(s));sel=null;$('bUndo').disabled=!undo.length;render();save()}
 let toastT=0;
@@ -301,6 +320,18 @@ function drawPitch(){
   <path d="M1 0A1 1 0 0 1 0 1M${W-1} 0A1 1 0 0 0 ${W} 1M0 ${H-1}A1 1 0 0 1 1 ${H}M${W} ${H-1}A1 1 0 0 0 ${W-1} ${H}" ${L}/>`;
   $('pitch').innerHTML=s;
 }
+function zonesSVG(cr){
+  if(!S.showZones) return '';
+  const lane='stroke="rgba(255,255,255,.5)" stroke-width=".18" stroke-dasharray=".9 .9"';
+  const zone='stroke="rgba(255,225,77,.75)" stroke-width=".26" stroke-dasharray="1.6 1"';
+  const lab=(x,y,t,a)=>`<g transform="translate(${x} ${y}) rotate(${cr})"><text class="zl" font-size="1.35" text-anchor="${a}" y=".45">${t}</text></g>`;
+  let s='';
+  [13.84,24.84,H-24.84,H-13.84].forEach(y=>s+=`<line x1="0" y1="${y}" x2="${W}" y2="${y}" ${lane}/>`);
+  [W/3,W*2/3].forEach(x=>s+=`<line x1="${x}" y1="0" x2="${x}" y2="${H}" ${zone}/>`);
+  [[6.92,'大外'],[19.34,'ハーフスペース'],[34,'中央'],[H-19.34,'ハーフスペース'],[H-6.92,'大外']].forEach(([y,t])=>s+=lab(W/3+.8,y,t,'start'));
+  [[W/6,'ディフェンシブサード'],[W/2,'ミドルサード'],[W*5/6,'アタッキングサード']].forEach(([x,t])=>s+=lab(x,H-1.4,t,cr?'end':'middle'));
+  return s;
+}
 function inkFor(hex){const c=parseInt(hex.slice(1),16),r=c>>16,g=c>>8&255,b=c&255;return (r*299+g*587+b*114)/1000>160?'#13241A':'#FFFFFF'}
 
 /* ---------- drawings ---------- */
@@ -311,7 +342,19 @@ function pathD(p){
   for(let i=1;i<p.length-1;i++){const mx=(p[i][0]+p[i+1][0])/2,my=(p[i][1]+p[i+1][1])/2;d+=`Q${p[i][0].toFixed(2)} ${p[i][1].toFixed(2)} ${mx.toFixed(2)} ${my.toFixed(2)}`}
   const l=p[p.length-1];return d+`L${l[0].toFixed(2)} ${l[1].toFixed(2)}`;
 }
+function textW(d){return [...d.text].reduce((s,c)=>s+(c.charCodeAt(0)>255?1:.58),0)*TS}
+function textSVG(d,i,cr){
+  const [x,y]=d.pts[0], w=Math.max(textW(d),TS*2);
+  const box=i===editing?`<rect x="${-w/2-.7}" y="${-TS*.75}" width="${w+1.4}" height="${TS*1.5}" rx=".5" fill="none" stroke="#FFE14D" stroke-width=".2" stroke-dasharray=".7 .5"/>`:'';
+  return `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${cr})">${box}<text class="note" font-size="${TS}" y="${(TS*.35).toFixed(2)}" fill="${d.color}">${esc(d.text)}</text></g>`;
+}
+function hitText(d,x,y){
+  const [px,py]=d.pts[0], a=vertical?Math.PI/2:0, dx=x-px, dy=y-py;
+  return Math.abs(dx*Math.cos(a)+dy*Math.sin(a))<Math.max(textW(d),TS*2)/2+.8 && Math.abs(-dx*Math.sin(a)+dy*Math.cos(a))<TS*.75+.5;
+}
+function hitTextAt(x,y){for(let k=S.drawings.length-1;k>=0;k--){const d=S.drawings[k];if(d.kind=='text'&&hitText(d,x,y))return k}return -1}
 function drawingSVG(d){
+  if(d.kind=='text') return '';
   const p=d.pts; if(p.length<2) return '';
   const E=p[p.length-1]; let B=p[0];
   for(let i=p.length-2;i>=0;i--){if(Math.hypot(E[0]-p[i][0],E[1]-p[i][1])>=1.8){B=p[i];break}}
@@ -325,7 +368,8 @@ function drawingSVG(d){
 }
 function segDist(px,py,a,b){const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((px-a[0])*dx+(py-a[1])*dy)/l:0;t=Math.max(0,Math.min(1,t));return Math.hypot(px-a[0]-t*dx,py-a[1]-t*dy)}
 function hitDrawing(x,y){
-  for(let k=S.drawings.length-1;k>=0;k--){const p=S.drawings[k].pts;
+  for(let k=S.drawings.length-1;k>=0;k--){const d=S.drawings[k],p=d.pts;
+    if(d.kind=='text'){if(hitText(d,x,y))return k;continue}
     for(let i=0;i<p.length-1;i++) if(segDist(x,y,p[i],p[i+1])<1.6) return k;}
   return -1;
 }
@@ -333,6 +377,8 @@ function hitDrawing(x,y){
 /* ---------- render ---------- */
 function render(){
   const cr=vertical?90:0;
+  $('zonesL').innerHTML=zonesSVG(cr);
+  $('textL').innerHTML=S.drawings.map((d,i)=>d.kind=='text'?textSVG(d,i,cr):'').join('');
   $('drawL').innerHTML=S.drawings.map(drawingSVG).join('')+(drag&&drag.k=='pen'?drawingSVG(drag.d):'');
   let s='';
   S.teams.forEach((t,ti)=>{ if(!t.visible) return; const ink=inkFor(t.color), edge=ink=='#FFFFFF'?'#FFFFFF':'#13241A';
@@ -370,6 +416,8 @@ function render(){
   $('bNames').setAttribute('aria-pressed',S.showNames);
   $('bAway').setAttribute('aria-pressed',!S.teams[1].visible);
   $('bPlay').disabled=S.scenes.length<2;
+  $('bZones').setAttribute('aria-pressed',S.showZones);
+  $('bClearDraw').disabled=!S.drawings.length;
 }
 
 /* ---------- orientation ---------- */
@@ -386,7 +434,8 @@ new ResizeObserver(layout).observe($('wrap'));
 
 /* ---------- modes ---------- */
 function setMode(m){
-  mode=m; document.body.classList.remove('move','pen','erase'); document.body.classList.add(m);
+  if(m!='text') endEdit();
+  mode=m; document.body.classList.remove('move','pen','erase','text'); document.body.classList.add(m);
   document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode==m));
   $('penBar').hidden=m!='pen'; sel=null; render();
 }
@@ -395,7 +444,26 @@ document.querySelectorAll('[data-shape]').forEach(b=>b.onclick=()=>{pen.shape=b.
 document.querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>{pen.kind=b.dataset.kind;document.querySelectorAll('[data-kind]').forEach(x=>x.setAttribute('aria-pressed',x===b))});
 $('penColors').innerHTML=PEN_COLORS.map(c=>`<button class="pc" data-pc="${c}" style="background:${c}" aria-label="線の色" aria-pressed="${c==pen.color}"></button>`).join('');
 $('penColors').addEventListener('click',e=>{const b=e.target.closest('[data-pc]');if(!b)return;pen.color=b.dataset.pc;$('penColors').querySelectorAll('.pc').forEach(x=>x.setAttribute('aria-pressed',x===b))});
-$('bClearDraw').onclick=()=>{if(!S.drawings.length)return;pushUndo();S.drawings=[];render();save();toast('線を全部消しました（元に戻す で復元できます）')};
+$('bClearDraw').onclick=()=>{if(!S.drawings.length)return;pushUndo();S.drawings=[];editing=null;$('textBar').hidden=true;render();save();toast('矢印と文字を全部消しました（元に戻す で復元できます）')};
+$('bZones').onclick=()=>{S.showZones=!S.showZones;render();save()};
+
+/* ---------- text notes ---------- */
+$('textColors').innerHTML=PEN_COLORS.map(c=>`<button class="pc" data-tc="${c}" style="background:${c}" aria-label="文字の色" aria-pressed="${c==txtColor}"></button>`).join('');
+function markTextColor(c){$('textColors').querySelectorAll('.pc').forEach(x=>x.setAttribute('aria-pressed',x.dataset.tc==c))}
+function editUndoOnce(){if(!editUndo){editUndo=true;pushUndo()}}
+function beginEdit(k){editing=k;editUndo=false;const d=S.drawings[k];$('tText').value=d.text;txtColor=d.color;markTextColor(d.color);$('textBar').hidden=false;render()}
+function endEdit(){
+  if(editing==null) return;
+  const d=S.drawings[editing];
+  if(d&&d.kind=='text'&&!d.text.trim()) S.drawings.splice(editing,1);
+  editing=null;$('textBar').hidden=true;if(document.activeElement===$('tText'))$('tText').blur();render();save();
+}
+$('textColors').addEventListener('click',e=>{const b=e.target.closest('[data-tc]');if(!b)return;txtColor=b.dataset.tc;markTextColor(txtColor);
+  if(editing!=null){editUndoOnce();S.drawings[editing].color=txtColor;render();save()}});
+$('tText').addEventListener('input',e=>{if(editing==null)return;editUndoOnce();S.drawings[editing].text=e.target.value;render();save()});
+$('tText').addEventListener('keydown',e=>{if(e.key=='Enter'&&!e.isComposing){e.preventDefault();endEdit()}});
+$('tDone').onclick=endEdit;
+$('tDel').onclick=()=>{if(editing==null)return;editUndoOnce();S.drawings[editing].text='';endEdit();toast('文字を削除しました')};
 
 /* ---------- pointer ---------- */
 const svg=$('board');
@@ -407,6 +475,12 @@ svg.addEventListener('pointerdown',e=>{
   const q=pt(e);
   if(mode=='pen'){drag={k:'pen',line:pen.shape=='line',d:{kind:pen.kind,color:pen.color,pts:[[clampX(q.x),clampY(q.y)]]}};}
   else if(mode=='erase'){drag={k:'erase',moved:false};eraseAt(q)}
+  else if(mode=='text'){
+    const k=hitTextAt(q.x,q.y);
+    if(k>=0){if(k!==editing){endEdit();beginEdit(hitTextAt(q.x,q.y))}const d=S.drawings[editing];drag={k:'txt',q,ox:d.pts[0][0],oy:d.pts[0][1],cx:e.clientX,cy:e.clientY,moved:false}}
+    else if(editing!=null){endEdit();return}
+    else{pushUndo();S.drawings.push({kind:'text',color:txtColor,text:'',pts:[[clampX(q.x),clampY(q.y)]]});beginEdit(S.drawings.length-1);editUndo=true;drag={k:'txtnew'}}
+  }
   else{
     const hd=e.target.closest('[data-handle]'), tk=e.target.closest('.tok'), bl=e.target.closest('#ball');
     if(hd&&sel) drag={k:'rot',moved:false};
@@ -422,6 +496,10 @@ svg.addEventListener('pointermove',e=>{
     if(drag.line){p.length=1;p.push([x,y]);render();return}
     const l=p[p.length-1];if(Math.hypot(x-l[0],y-l[1])>.5){p.push([x,y]);render()}return}
   if(drag.k=='erase'){eraseAt(q);return}
+  if(drag.k=='txtnew') return;
+  if(drag.k=='txt'){if(editing==null)return;
+    if(!drag.moved){if(Math.hypot(e.clientX-drag.cx,e.clientY-drag.cy)<5)return;drag.moved=true;editUndoOnce()}
+    S.drawings[editing].pts[0]=[clampX(drag.ox+q.x-drag.q.x),clampY(drag.oy+q.y-drag.q.y)];render();return}
   if(drag.k=='rot'){const p=S.teams[sel.t].players[sel.i];
     if(!drag.moved){drag.moved=true;pushUndo()}
     p.a=Math.atan2(q.y-p.y,q.x-p.x)*180/Math.PI; render(); return;}
@@ -437,6 +515,7 @@ function endDrag(){
     if(len>=2){pushUndo();S.drawings.push(drag.d)}}
   else if(drag.k=='p'&&!drag.moved){ sel=(sel&&sel.t==drag.t&&sel.i==drag.i)?null:{t:drag.t,i:drag.i}; }
   else if(drag.k=='p'&&drag.moved){ sel={t:drag.t,i:drag.i}; }
+  else if((drag.k=='txtnew'||drag.k=='txt'&&!drag.moved)&&editing!=null){ $('tText').focus(); }
   drag=null; render(); save();
 }
 svg.addEventListener('pointerup',endDrag); svg.addEventListener('pointercancel',endDrag);
@@ -577,7 +656,7 @@ function startPlay(restart){
   if(S.scenes.length<2) return;
   if(restart!==true) pushUndo(); sel=null;
   play={list:S.scenes.map(s=>JSON.parse(s.data)),idx:0,phase:'hold',t0:performance.now(),speed:play?play.speed:1,raf:0,done:false};
-  document.body.classList.add('playing'); $('playBar').hidden=false; $('insp').hidden=true; $('penBar').hidden=true;
+  endEdit(); document.body.classList.add('playing'); $('playBar').hidden=false; $('insp').hidden=true; $('penBar').hidden=true;
   setBoard(play.list[0]); render(); updPlayLabel(); play.raf=requestAnimationFrame(tick);
 }
 function updPlayLabel(){$('pLabel').textContent=`${play.idx+1} / ${play.list.length}`;$('pSpeed').textContent=`速さ ${play.speed}×`}
