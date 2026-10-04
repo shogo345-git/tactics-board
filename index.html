@@ -89,7 +89,8 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
 .sw button[aria-pressed="true"]{box-shadow:0 0 0 3px var(--accent)}
 .step{display:flex;align-items:center;gap:6px}
 .step output{min-width:34px;text-align:center;font-family:"Barlow Condensed",sans-serif;font-size:22px;font-weight:700}
-.roster{display:grid;grid-template-columns:64px 1fr;gap:6px;margin-top:6px}
+.roster{display:grid;grid-template-columns:56px 1fr 118px;gap:6px;margin-top:6px}
+.roster select{width:100%}
 .roster input.n{text-align:center}
 .hint{font-size:13px;color:var(--muted);line-height:1.6;margin:6px 0 0}
 .scenes{list-style:none;padding:0;margin:12px 0 0;display:flex;flex-direction:column;gap:6px}
@@ -144,7 +145,7 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
     <span class="dot" id="iDot"></span>
     <input class="n" id="iNum" inputmode="numeric" aria-label="背番号" maxlength="3">
     <input class="m" id="iName" placeholder="名前" aria-label="名前" maxlength="14">
-    <select id="iPos" aria-label="ポジション"><option>GK</option><option>DF</option><option>MF</option><option>FW</option></select>
+    <select id="iPos" aria-label="ポジション"></select>
     <button class="ib" id="iClose" aria-label="閉じる">×</button>
   </div>
 
@@ -223,6 +224,16 @@ const F={
   '3-5-2':[[.06,.5],[.34,.25],[.34,.5],[.34,.75],[.62,.08],[.58,.33],[.66,.5],[.58,.67],[.62,.92],[.92,.38],[.92,.62]],
   '3-4-3':[[.06,.5],[.34,.25],[.34,.5],[.34,.75],[.62,.12],[.62,.38],[.62,.62],[.62,.88],[.9,.18],[.94,.5],[.9,.82]]}
 };
+const REG={
+ GK:{l:'GK',c:'GK',xy:[.06,.5]},
+ RSB:{l:'右SB',c:'DF',xy:[.34,.88]},RCB:{l:'右CB',c:'DF',xy:[.34,.66]},CB:{l:'CB',c:'DF',xy:[.34,.5]},LCB:{l:'左CB',c:'DF',xy:[.34,.34]},LSB:{l:'左SB',c:'DF',xy:[.34,.12]},
+ DMF:{l:'ボランチ',c:'MF',xy:[.54,.5]},RMF:{l:'右MF',c:'MF',xy:[.64,.88]},LMF:{l:'左MF',c:'MF',xy:[.64,.12]},OMF:{l:'トップ下',c:'MF',xy:[.76,.5]},
+ RWG:{l:'右WG',c:'FW',xy:[.9,.85]},CF:{l:'CF',c:'FW',xy:[.94,.5]},LWG:{l:'左WG',c:'FW',xy:[.9,.15]}};
+const REG_GROUPS=[['GK',['GK']],['DF',['RSB','RCB','CB','LCB','LSB']],['MF',['DMF','RMF','LMF','OMF']],['FW',['RWG','CF','LWG']]];
+const regOf=p=>p.reg&&REG[p.reg]?REG[p.reg]:null;
+function regOptions(v,auto){
+  return `<option value="">${auto?`自動 ${auto}`:'未設定'}</option>`+REG_GROUPS.map(([g,ids])=>`<optgroup label="${g}">${ids.map(id=>`<option value="${id}"${id==v?' selected':''}>${REG[id].l}</option>`).join('')}</optgroup>`).join('');
+}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const clone=o=>JSON.parse(JSON.stringify(o));
@@ -268,20 +279,31 @@ function formPts(t){return (F[t.count]&&F[t.count][t.formation])||autoForm(t.cou
 function ensurePos(ti){
   const t=S.teams[ti]; if(t.players.every(p=>p.pos)) return;
   const pts=formPts(t); if(pts.length!=t.players.length) return;
-  const slot=assignSlots(t.players.map(p=>typeof p.x=='number'?toLocal(ti,p):null),pts), roles=lineRoles(pts);
+  const slot=assignSlots(t.players.map(p=>typeof p.x=='number'?{xy:toLocal(ti,p)}:null),pts), roles=lineRoles(pts);
   t.players.forEach((p,i)=>{if(!p.pos)p.pos=roles[slot[i]]});
 }
 /* players: per-player own-half coords (or null) → slot index in pts; deepest player takes the GK slot */
-function assignSlots(coords,pts){
-  const idx=coords.map((_,i)=>i), slot=idx.slice(), known=idx.filter(i=>coords[i]);
+/* items[i] = {xy, reg} per player (or null for a new player) → slot index in pts.
+   Registered players: stay in their line (DF/MF/FW) as far as the slot counts allow (moving one line at a time),
+   then the same lane (wide / half-space / centre), then the nearest spot.
+   When someone has to change line, wide players (SB, side MF) go first: SB→WB, side MF→winger.
+   Others: nearest slot by relative position. The GK slot goes to the registered GK, else the deepest player. */
+const LINE_IDX={GK:0,DF:0,MF:1,FW:2};
+const lane=y=>y<.2?0:y<.4?1:y<=.6?2:y<=.8?3:4; // 大外・ハーフスペース・中央・ハーフスペース・大外
+function assignSlots(items,pts){
+  const idx=items.map((_,i)=>i), slot=idx.slice(), known=idx.filter(i=>items[i]);
   if(!known.length) return slot;
-  const gk=known.reduce((a,b)=>coords[b][0]<coords[a][0]?b:a), rows=idx.filter(i=>i!=gk), dst=pts.slice(1);
-  const kn=rows.filter(i=>coords[i]), A=normPts(kn.map(i=>coords[i])), B=normPts(dst), pos=new Map(kn.map((i,k)=>[i,A[k]]));
-  const as=hungarian(rows.map(i=>dst.map((_,k)=>{const a=pos.get(i);if(!a)return 0;const dx=a[0]-B[k][0],dy=a[1]-B[k][1];return dx*dx+dy*dy})));
+  const gkScore=i=>{const it=items[i];return !it?99:it.reg?(it.reg.c=='GK'?-10:10+it.xy[0]):it.xy[0]};
+  const gk=idx.reduce((a,b)=>gkScore(b)<gkScore(a)?b:a), rows=idx.filter(i=>i!=gk), dst=pts.slice(1), dcat=lineRoles(pts).slice(1);
+  const free=rows.filter(i=>items[i]&&!items[i].reg), A=normPts(free.map(i=>items[i].xy)), B=normPts(dst), npos=new Map(free.map((i,k)=>[i,A[k]]));
+  const as=hungarian(rows.map(i=>dst.map((q,k)=>{const it=items[i];if(!it)return 0;
+    if(it.reg){const dl=LINE_IDX[it.reg.c]-LINE_IDX[dcat[k]],wide=lane(it.xy[1])%4==0;return (wide?7:10)*dl*dl+3*(1+dl*dl)*Math.abs(lane(it.xy[1])-lane(q[1]))+Math.abs(it.xy[1]-q[1])+.5*Math.abs(it.xy[0]-q[0])}
+    const a=npos.get(i),dx=a[0]-B[k][0],dy=a[1]-B[k][1];return dx*dx+dy*dy})));
   slot[gk]=0; rows.forEach((i,r)=>slot[i]=as[r]+1);
   return slot;
 }
-/* Each player keeps a fixed role (p.role, own-half coords) and the spot he was last placed at (p.home).
+/* A player with a registered position (p.reg) always goes to the slot nearest that position.
+   Others keep a fixed role (p.role, own-half coords) and the spot he was last placed at (p.home).
    While nobody has been dragged since the last arrangement, roles stay fixed, so the result depends only on
    the chosen formation (A→B→A gives the same layout). If someone was moved, the current layout becomes the new roles. */
 function applyFormation(ti){
@@ -290,9 +312,10 @@ function applyFormation(ti){
   t.players.length=n;
   const pts=(F[n]&&F[n][t.formation])||autoForm(n);
   const placed=p=>typeof p.x=='number';
-  const kept=t.players.some(p=>p.role)&&t.players.every(p=>!p.role||!placed(p)||p.home&&Math.hypot(p.x-p.home[0],p.y-p.home[1])<.5);
-  if(!kept) t.players.forEach(p=>{p.role=placed(p)?toLocal(ti,p):null});
-  const slot=assignSlots(t.players.map(p=>p.role||null),pts), roles=lineRoles(pts);
+  const free=t.players.filter(p=>!regOf(p));
+  const kept=free.some(p=>p.role)&&free.every(p=>!p.role||!placed(p)||p.home&&Math.hypot(p.x-p.home[0],p.y-p.home[1])<.5);
+  if(!kept) free.forEach(p=>{p.role=placed(p)?toLocal(ti,p):null});
+  const slot=assignSlots(t.players.map(p=>regOf(p)?{xy:regOf(p).xy,reg:regOf(p)}:p.role?{xy:p.role}:null),pts), roles=lineRoles(pts);
   t.players.forEach((p,i)=>{const [fx,fy]=pts[slot[i]]; p.pos=roles[slot[i]];
     if(ti==0){p.x=fx*W/2;p.y=fy*H;p.a=0}else{p.x=W-fx*W/2;p.y=H-fy*H;p.a=180}
     if(!p.role) p.role=[fx,fy];
@@ -423,7 +446,7 @@ function render(){
   S.teams.forEach((t,ti)=>{ if(!t.visible) return; ensurePos(ti); const ink=inkFor(t.color), edge=ink=='#FFFFFF'?'#FFFFFF':'#13241A';
     t.players.forEach((p,i)=>{
       const nm=S.showNames&&p.name?`<text class="nm" y="${R+2.3}" font-size="1.65">${esc(p.name)}</text>`:'';
-      const sh=SHAPES[p.pos]||SHAPES.MF, st=`fill="${t.color}" stroke="${edge}" stroke-width=".32" stroke-linejoin="round"`;
+      const sh=SHAPES[regOf(p)?regOf(p).c:p.pos]||SHAPES.MF, st=`fill="${t.color}" stroke="${edge}" stroke-width=".32" stroke-linejoin="round"`;
       s+=`<g class="tok" data-t="${ti}" data-i="${i}" transform="translate(${p.x.toFixed(2)} ${p.y.toFixed(2)})">
         <circle r="3.6" fill="transparent"/>
         <path transform="rotate(${p.a.toFixed(1)})" d="M${sh.b} -1.15L${sh.b+1.45} 0L${sh.b} 1.15Z" fill="${t.color}" stroke="${edge}" stroke-width=".18" stroke-linejoin="round"/>
@@ -450,7 +473,7 @@ function render(){
     $('insp').hidden=false; $('iDot').style.background=t.color;
     if(document.activeElement!==$('iNum')) $('iNum').value=p.num;
     if(document.activeElement!==$('iName')) $('iName').value=p.name;
-    $('iPos').value=p.pos||'MF';
+    if(document.activeElement!==$('iPos')) $('iPos').innerHTML=regOptions(p.reg||'',p.pos);
   } else { $('insp').hidden=true; sel=null; }
   pruneMsel();
   if(msel&&mode=='move'&&!play){
@@ -627,7 +650,8 @@ svg.addEventListener('pointerup',endDrag); svg.addEventListener('pointercancel',
 /* ---------- inspector ---------- */
 $('iNum').addEventListener('input',e=>{if(!sel)return;S.teams[sel.t].players[sel.i].num=e.target.value;render();save()});
 $('iName').addEventListener('input',e=>{if(!sel)return;S.teams[sel.t].players[sel.i].name=e.target.value;render();save()});
-$('iPos').addEventListener('change',e=>{if(!sel)return;pushUndo();S.teams[sel.t].players[sel.i].pos=e.target.value;render();save()});
+function setReg(p,v){if(v)p.reg=v;else delete p.reg}
+$('iPos').addEventListener('change',e=>{if(!sel)return;pushUndo();setReg(S.teams[sel.t].players[sel.i],e.target.value);e.target.blur();render();save()});
 $('iClose').onclick=()=>{sel=null;document.activeElement.blur();render()};
 
 /* ---------- toolbar ---------- */
@@ -650,8 +674,9 @@ function renderSettings(){
     <select id="tForm" class="grow">${forms.map(f=>`<option ${f==t.formation?'selected':''}>${f}</option>`).join('')}<option value="auto" ${forms.includes(t.formation)?'':'selected'}>自動配置</option></select></div>
   <div class="row"><label></label><button class="btn primary" id="tApply">この配置に並べ直す</button></div>
   <p class="hint">5・7・8・11人はフォーメーションを選べます。それ以外の人数は自動で並びます。</p>
-  <div class="roster" style="margin-top:14px"><span class="hint" style="margin:0">背番号</span><span class="hint" style="margin:0">名前</span>
-  ${t.players.map((p,i)=>`<input class="n" data-num="${i}" value="${esc(p.num)}" inputmode="numeric" maxlength="3" aria-label="${i+1}人目の背番号"><input data-name="${i}" value="${esc(p.name)}" placeholder="名前" maxlength="14" aria-label="${i+1}人目の名前">`).join('')}</div>`;
+  <div class="roster" style="margin-top:14px"><span class="hint" style="margin:0">背番号</span><span class="hint" style="margin:0">名前</span><span class="hint" style="margin:0">ポジション</span>
+  ${t.players.map((p,i)=>`<input class="n" data-num="${i}" value="${esc(p.num)}" inputmode="numeric" maxlength="3" aria-label="${i+1}人目の背番号"><input data-name="${i}" value="${esc(p.name)}" placeholder="名前" maxlength="14" aria-label="${i+1}人目の名前"><select data-reg="${i}" aria-label="${i+1}人目のポジション">${regOptions(p.reg||'',p.pos)}</select>`).join('')}</div>
+  <p class="hint">ポジションを入れると、フォーメーションを変えても その位置に一番近い場所に並びます（形も GK・DF は四角、MF は丸、FW は三角）。入れ終わったら「この配置に並べ直す」で並び直せます。</p>`;
 }
 $('setBody').addEventListener('click',e=>{
   const b=e.target.closest('button'); if(!b) return; const t=S.teams[tab];
@@ -671,6 +696,7 @@ $('setBody').addEventListener('input',e=>{
 $('setBody').addEventListener('change',e=>{
   if(e.target.id=='tForm'){pushUndo();S.teams[tab].formation=e.target.value;applyFormation(tab);sel=null;render();save();toast('今のポジションを保ったまま並べ替えました')}
   if(e.target.id=='tName') renderSettings();
+  if(e.target.dataset.reg!=null){pushUndo();setReg(S.teams[tab].players[+e.target.dataset.reg],e.target.value);render();save()}
 });
 $('bSettings').onclick=()=>{renderSettings();$('dSet').showModal()};
 
