@@ -173,6 +173,7 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
     <div class="row" style="flex-wrap:wrap">
       <button class="btn" id="bExport">ファイルに書き出す</button>
       <button class="btn" id="bImport">ファイルを読み込む</button>
+      <button class="btn" id="bDefault" hidden>共有された初期データを読み込む</button>
       <input type="file" id="fileIn" accept=".json,application/json" hidden>
     </div>
   </div>
@@ -222,6 +223,7 @@ function fresh(){
 }
 let S;
 try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){S=null}
+const firstLaunch=!S;
 if(!S||!Array.isArray(S.teams)){S=fresh();S.teams.forEach((_,i)=>applyFormation(i))}
 if(!Array.isArray(S.drawings)) S.drawings=[];
 if(!S.homeBlue){S.homeBlue=true;const h=S.teams[0],a=S.teams[1];if(h&&a&&h.color=='#D7263D'&&a.color=='#1F4FD6'){h.color='#1F4FD6';a.color='#D7263D'}}
@@ -502,6 +504,24 @@ $('fileIn').addEventListener('change',async e=>{
     toast(`読み込みました（場面 ${added} 件を追加）`);
   }catch(err){toast('このファイルは読み込めません。作戦ボードで書き出したファイルを選んでください')}
 });
+
+/* ---------- shared default (default.json next to index.html) ---------- */
+let sharedDefault=null;
+function validData(o){return o&&o.app==='tactics-board'&&o.board&&Array.isArray(o.board.teams)}
+function applyShared(o,replaceAll){
+  setBoard(o.board); if(typeof o.showNames==='boolean') S.showNames=o.showNames;
+  if(replaceAll){S.scenes=(o.scenes||[]).filter(x=>x&&typeof x.data==='string').map(x=>({name:x.name||'場面',data:x.data}));return S.scenes.length}
+  const names=new Set(S.scenes.map(x=>x.name));let added=0;
+  (o.scenes||[]).forEach(x=>{if(!x||typeof x.data!=='string')return;let n=x.name||'場面',k=2,base=n;while(names.has(n))n=`${base} (${k++})`;names.add(n);S.scenes.push({name:n,data:x.data});added++});
+  return added;
+}
+if(location.protocol.startsWith('http')){
+  fetch('default.json',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(o=>{
+    if(!validData(o)) return; sharedDefault=o; $('bDefault').hidden=false;
+    if(firstLaunch){applyShared(o,true);sel=null;render();save()}
+  }).catch(()=>{});
+}
+$('bDefault').onclick=()=>{if(!sharedDefault)return;pushUndo();const n=applyShared(sharedDefault,false);sel=null;render();save();renderScenes();toast(`初期データを読み込みました（場面 ${n} 件を追加）`)};
 
 /* ---------- playback ---------- */
 const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
