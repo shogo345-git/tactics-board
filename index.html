@@ -34,10 +34,12 @@ body{height:100%;background:var(--bg);color:var(--ink);
 .bar{display:flex;align-items:center;gap:6px;padding:8px max(10px,env(safe-area-inset-left,0px)) 8px max(10px,env(safe-area-inset-right,0px));flex:none}
 .bscroll{display:flex;align-items:center;gap:6px;overflow-x:auto;flex:1;min-width:0}
 .btn.icon{width:46px;padding:0;justify-content:center}
+.seg.tools{flex:none}
+.seg.tools button{width:42px;padding:0;display:inline-flex;align-items:center;justify-content:center}
 #bUndo{flex:none}
 .bar h1{font-size:17px;font-weight:700;margin:0 8px 0 2px;white-space:nowrap;letter-spacing:.02em}
 .bar .sp{flex:1;min-width:4px}
-body.playing .bscroll>*:not(h1),body.playing #bUndo{opacity:.35;pointer-events:none}
+body.playing .bscroll>*:not(h1),body.playing #bUndo,body.playing .tools{opacity:.35;pointer-events:none}
 #bFull[hidden]{display:none}
 button{font:inherit;color:inherit;cursor:pointer}
 .btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;min-height:40px;padding:0 12px;font-size:14px;font-weight:500;white-space:nowrap;display:inline-flex;align-items:center;gap:6px;flex:none}
@@ -53,7 +55,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .wrap{flex:1;min-height:0;position:relative;display:flex;flex-direction:column;padding:0 max(6px,env(safe-area-inset-left,0px)) 4px max(6px,env(safe-area-inset-right,0px))}
 svg#board{flex:1;min-height:0;width:100%;display:block;touch-action:none}
 .dock{flex:none;height:62px;display:flex;align-items:center;justify-content:center;gap:8px;min-width:0}
-.dock .float{position:static;transform:none;box-shadow:0 2px 10px rgba(10,30,18,.14)}
+.dock .float{position:static;transform:none;box-shadow:0 2px 10px rgba(10,30,18,.14);max-width:100%}
+#penBar{gap:6px;padding:6px}
+#penBar .seg button{padding:0 8px;font-size:13px}
+#penBar .vsep{display:none}
+#penBar #penColors{gap:5px!important}
+#penBar .pc{width:24px;height:24px}
 body.pen svg#board{cursor:crosshair}
 body.erase svg#board{cursor:cell}
 body.text svg#board{cursor:text}
@@ -113,12 +120,6 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
  <div class="bscroll">
   <h1>作戦ボード</h1>
   <button class="btn" id="bSettings">チーム設定</button>
-  <div class="seg" role="group" aria-label="ツール">
-    <button data-mode="move" aria-pressed="true">移動</button>
-    <button data-mode="pen" aria-pressed="false">ペン</button>
-    <button data-mode="text" aria-pressed="false">テキスト</button>
-    <button data-mode="erase" aria-pressed="false">消しゴム</button>
-  </div>
   <button class="btn" id="bMulti" aria-pressed="false">複数選択</button>
   <button class="btn" id="bNames" aria-pressed="true">名前</button>
   <button class="btn" id="bAway" aria-pressed="false">相手を隠す</button>
@@ -130,6 +131,12 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
   <button class="btn" id="bScenes">場面・ファイル</button>
   <button class="btn" id="bFull" hidden>全画面</button>
 </div>
+ <div class="seg tools" role="group" aria-label="ツール">
+  <button data-mode="move" aria-pressed="true" aria-label="移動" title="移動"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg></button>
+  <button data-mode="pen" aria-pressed="false" aria-label="ペン" title="ペン"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20l4-1L19 8a2.1 2.1 0 0 0-3-3L5 16l-1 4z"/><path d="M14 7l3 3"/></svg></button>
+  <button data-mode="text" aria-pressed="false" aria-label="テキスト" title="テキスト"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
+  <button data-mode="erase" aria-pressed="false" aria-label="消しゴム" title="消しゴム"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 20h12M5.5 14.5l7-7a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 18H8.5l-3-3a2 2 0 0 1 0-.5z"/><path d="M9 11l5 5"/></svg></button>
+ </div>
  <button class="btn icon" id="bUndo" aria-label="元に戻す" title="元に戻す" disabled><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
 </div>
 <div class="wrap" id="wrap">
@@ -169,13 +176,13 @@ dialog::backdrop{background:rgba(6,18,11,.45)}
 
   <div class="float" id="penBar" hidden>
     <div class="seg" role="group" aria-label="線の引き方">
-      <button data-shape="free" aria-pressed="true">フリーハンド</button>
-      <button data-shape="line" aria-pressed="false">直線</button>
+      <button data-shape="free" aria-pressed="true" title="フリーハンド（矢印なしの線。文字も書けます）">手書き線</button>
+      <button data-shape="line" aria-pressed="false" title="直線の矢印">直線矢印</button>
     </div>
     <span class="vsep"></span>
     <div class="seg" role="group" aria-label="線の種類">
-      <button data-kind="run" aria-pressed="true">動き（実線）</button>
-      <button data-kind="pass" aria-pressed="false">パス（破線）</button>
+      <button data-kind="run" aria-pressed="true" title="動き">実線</button>
+      <button data-kind="pass" aria-pressed="false" title="パス">破線</button>
     </div>
     <span class="vsep"></span>
     <span id="penColors" style="display:flex;gap:8px"></span>
@@ -428,14 +435,16 @@ function hitTextAt(x,y){for(let k=S.drawings.length-1;k>=0;k--){const d=S.drawin
 function drawingSVG(d){
   if(d.kind=='text') return '';
   const p=d.pts; if(p.length<2) return '';
+  const dash=d.kind=='pass'?' stroke-dasharray="1.1 .8"':'';
+  const line=`<path d="${pathD(p)}" fill="none" stroke="rgba(0,0,0,.25)" stroke-width=".85" stroke-linecap="round" stroke-linejoin="round"${dash}/>
+    <path d="${pathD(p)}" fill="none" stroke="${d.color}" stroke-width=".48" stroke-linecap="round" stroke-linejoin="round"${dash}/>`;
+  if(d.head===false) return `<g>${line}</g>`; // freehand: plain line (lets people write letters)
   const E=p[p.length-1]; let B=p[0];
   for(let i=p.length-2;i>=0;i--){if(Math.hypot(E[0]-p[i][0],E[1]-p[i][1])>=1.8){B=p[i];break}}
   const a=Math.atan2(E[1]-B[1],E[0]-B[0]), L=1.7, w=.95;
   const bx=E[0]-L*Math.cos(a), by=E[1]-L*Math.sin(a);
   const h=`M${E[0].toFixed(2)} ${E[1].toFixed(2)}L${(bx+w*Math.sin(a)).toFixed(2)} ${(by-w*Math.cos(a)).toFixed(2)}L${(bx-w*Math.sin(a)).toFixed(2)} ${(by+w*Math.cos(a)).toFixed(2)}Z`;
-  const dash=d.kind=='pass'?' stroke-dasharray="1.1 .8"':'';
-  return `<g><path d="${pathD(p)}" fill="none" stroke="rgba(0,0,0,.25)" stroke-width=".85" stroke-linecap="round" stroke-linejoin="round"${dash}/>
-    <path d="${pathD(p)}" fill="none" stroke="${d.color}" stroke-width=".48" stroke-linecap="round" stroke-linejoin="round"${dash}/>
+  return `<g>${line}
     <path d="${h}" fill="${d.color}" stroke="rgba(0,0,0,.25)" stroke-width=".12"/></g>`;
 }
 function segDist(px,py,a,b){const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((px-a[0])*dx+(py-a[1])*dy)/l:0;t=Math.max(0,Math.min(1,t));return Math.hypot(px-a[0]-t*dx,py-a[1]-t*dy)}
@@ -601,7 +610,7 @@ function eraseAt(q){const k=hitDrawing(q.x,q.y);if(k<0)return;if(!drag.moved){dr
 svg.addEventListener('pointerdown',e=>{
   if(play) return;
   const q=pt(e);
-  if(mode=='pen'){drag={k:'pen',line:pen.shape=='line',d:{kind:pen.kind,color:pen.color,pts:[[clampX(q.x),clampY(q.y)]]}};}
+  if(mode=='pen'){drag={k:'pen',line:pen.shape=='line',d:{kind:pen.kind,color:pen.color,pts:[[clampX(q.x),clampY(q.y)]]}};if(!drag.line)drag.d.head=false;}
   else if(mode=='erase'){drag={k:'erase',moved:false};eraseAt(q)}
   else if(mode=='text'){
     const k=hitTextAt(q.x,q.y);
@@ -626,7 +635,7 @@ svg.addEventListener('pointermove',e=>{
   if(!drag) return; const q=pt(e);
   if(drag.k=='pen'){const p=drag.d.pts,x=clampX(q.x),y=clampY(q.y);
     if(drag.line){p.length=1;p.push([x,y]);render();return}
-    const l=p[p.length-1];if(Math.hypot(x-l[0],y-l[1])>.5){p.push([x,y]);render()}return}
+    const l=p[p.length-1];if(Math.hypot(x-l[0],y-l[1])>.2){p.push([x,y]);render()}return}
   if(drag.k=='erase'){eraseAt(q);return}
   if(drag.k=='txtnew') return;
   if(drag.k=='txt'){if(editing==null)return;
@@ -646,7 +655,8 @@ svg.addEventListener('pointermove',e=>{
 function endDrag(){
   if(!drag) return;
   if(drag.k=='pen'){const p=drag.d.pts;let len=0;for(let i=1;i<p.length;i++)len+=Math.hypot(p[i][0]-p[i-1][0],p[i][1]-p[i-1][1]);
-    if(len>=2){pushUndo();S.drawings.push(drag.d)}}
+    if(!drag.line&&p.length==1)p.push([p[0][0]+.05,p[0][1]]); // a tap with the freehand pen leaves a dot
+    if(len>=2||!drag.line){pushUndo();S.drawings.push(drag.d)}}
   else if(drag.k=='box'){ if(drag.moved) mselInBox(drag.q,drag.q1,multi); else if(drag.tap) mselToggle(drag.tap[0],drag.tap[1]); else if(!multi){sel=null;msel=null} }
   else if(drag.k=='group'&&!drag.moved){ mselToggle(drag.tap[0],drag.tap[1]); }
   else if(drag.k=='ball'&&!drag.moved&&(msel||drag.shift)){ mselToggle('ball'); }
